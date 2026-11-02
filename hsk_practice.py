@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import winreg
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -31,6 +32,8 @@ WRONG_BG = "#7a2626"
 RIGHT_TEXT = "#6fd08c"
 WRONG_TEXT = "#f28b82"
 YOU_TEXT = "#7db7ff"
+SELECTION = "#3a6ea5"
+TEXT_WIDTH_PX = 520
 BUTTON_STYLE = dict(bg=SURFACE, fg=TEXT, activebackground=HOVER, activeforeground=TEXT,
                     disabledforeground=MUTED, relief="flat", bd=0, highlightthickness=0,
                     padx=10, pady=3)
@@ -68,6 +71,57 @@ def set_startup(enabled, value_name=RUN_VALUE):
             winreg.DeleteValue(key, value_name)
 
 
+def show_menu(event, actions):
+    """Open a right-click menu. actions is a list of (label, function)."""
+    menu = tk.Menu(event.widget, tearoff=0, bg=SURFACE, fg=TEXT, activebackground=HOVER,
+                   activeforeground=TEXT)
+    for label, action in actions:
+        menu.add_command(label=label, command=action)
+    menu.tk_popup(event.x_root, event.y_root)
+
+
+def copy_to_clipboard(widget, text):
+    widget.clipboard_clear()
+    widget.clipboard_append(text)
+
+
+def make_copyable(text_widget):
+    """Let a read-only Text take focus, since Ctrl+C only reaches the focused widget."""
+    text_widget.configure(selectbackground=SELECTION, selectforeground="white",
+                          inactiveselectbackground=SELECTION, cursor="xterm")
+    text_widget.bind("<Button-1>", lambda _event: text_widget.focus_set(), add="+")
+    text_widget.bind("<Button-3>", lambda event: show_menu(
+        event, [("Copy", lambda: text_widget.event_generate("<<Copy>>"))]))
+
+
+def fit_height(text_widget, _event=None):
+    lines = text_widget.count("1.0", "end", "displaylines")
+    height = lines[0] if lines else 1
+    if height != int(text_widget.cget("height")):
+        text_widget.configure(height=height)
+
+
+def readonly_label(parent, text, size, fg):
+    """Looks like a label, but its text can be selected and copied."""
+    font = (CHINESE_FONT, size)
+    widget = tk.Text(parent, font=font, fg=fg, bg=BG, relief="flat", bd=0, padx=0, pady=0,
+                     highlightthickness=0, wrap="word", height=1,
+                     width=TEXT_WIDTH_PX // tkfont.Font(font=font).measure("0"))
+    make_copyable(widget)
+    widget.bind("<Configure>", lambda event: fit_height(widget, event))
+    set_readonly_text(widget, text)
+    return widget
+
+
+def set_readonly_text(widget, text, fg=None):
+    widget.configure(state="normal")
+    widget.delete("1.0", "end")
+    widget.insert("1.0", text)
+    widget.configure(state="disabled", **({"fg": fg} if fg else {}))
+    widget.update_idletasks()
+    fit_height(widget)
+
+
 class QuestionPopup:
     """Always-on-top question window. It can't be closed until answered or snoozed."""
 
@@ -86,11 +140,9 @@ class QuestionPopup:
         win.protocol("WM_DELETE_WINDOW", self.on_close_attempt)
         win.configure(padx=18, pady=14, bg=BG)
 
-        tk.Label(win, text=question.prompt, font=(CHINESE_FONT, 18), wraplength=520,
-                 justify="left", bg=BG, fg=TEXT).pack(anchor="w")
+        readonly_label(win, question.prompt, 18, TEXT).pack(anchor="w")
         if question.hint:
-            tk.Label(win, text=question.hint, font=(CHINESE_FONT, 11), wraplength=520,
-                     justify="left", bg=BG, fg=MUTED).pack(anchor="w")
+            readonly_label(win, question.hint, 11, MUTED).pack(anchor="w")
         tk.Frame(win, height=10, bg=BG).pack()
 
         self.buttons = []
@@ -98,11 +150,12 @@ class QuestionPopup:
             button = tk.Button(win, text=option, font=(CHINESE_FONT, 13), anchor="w",
                                justify="left", wraplength=500, takefocus=0, state="disabled",
                                command=lambda o=option: self.answer(o), **BUTTON_STYLE)
+            button.bind("<Button-3>", lambda event, o=option: show_menu(
+                event, [("Copy", lambda: copy_to_clipboard(event.widget, o))]))
             button.pack(fill="x", pady=2)
             self.buttons.append(button)
 
-        self.feedback = tk.Label(win, font=(CHINESE_FONT, 11), wraplength=520, justify="left",
-                                 bg=BG)
+        self.feedback = readonly_label(win, "", 11, TEXT)
         self.feedback.pack(anchor="w", pady=(8, 0))
 
         row = tk.Frame(win, bg=BG)
@@ -128,6 +181,7 @@ class QuestionPopup:
         self.log = tk.Text(self.chat, height=12, width=62, wrap="word", state="disabled",
                            font=(CHINESE_FONT, 10), bg=SURFACE, fg=TEXT, relief="flat",
                            highlightthickness=0, selectbackground=HOVER, padx=8, pady=6)
+        make_copyable(self.log)
         self.log.tag_configure("you", foreground=YOU_TEXT)
         self.log.pack(fill="both", expand=True, pady=(10, 4))
         entry_row = tk.Frame(self.chat, bg=BG)
@@ -136,6 +190,10 @@ class QuestionPopup:
                               insertbackground=TEXT, relief="flat", highlightthickness=0)
         self.entry.pack(side="left", fill="x", expand=True, ipady=3)
         self.entry.bind("<Return>", lambda _event: self.send())
+        self.entry.bind("<Button-3>", lambda event: show_menu(event, [
+            ("Cut", lambda: self.entry.event_generate("<<Cut>>")),
+            ("Copy", lambda: self.entry.event_generate("<<Copy>>")),
+            ("Paste", lambda: self.entry.event_generate("<<Paste>>"))]))
         self.send_button = tk.Button(entry_row, text="Send", command=self.send, **BUTTON_STYLE)
         self.send_button.pack(side="left", padx=(6, 0))
 
@@ -175,8 +233,8 @@ class QuestionPopup:
                 button.configure(bg=WRONG_BG, disabledforeground=TEXT)
             button.configure(state="disabled")
         heading = "Correct!" if correct else f"Not quite. The answer is: {self.question.answer}"
-        self.feedback.configure(text=f"{heading}\n{self.question.explain}",
-                                fg=RIGHT_TEXT if correct else WRONG_TEXT)
+        set_readonly_text(self.feedback, f"{heading}\n{self.question.explain}",
+                          RIGHT_TEXT if correct else WRONG_TEXT)
         self.snooze_button.pack_forget()
         self.done_button.pack(side="right")
         for button in self.play_buttons:
@@ -187,9 +245,10 @@ class QuestionPopup:
 
     def play(self, clip):
         if not audio.play(clip):
-            self.feedback.configure(
-                text=self.feedback.cget("text") + "\n(Could not play the audio. Check that "
-                                                  "the .apkg deck is still in the app folder.)")
+            set_readonly_text(
+                self.feedback, self.feedback.get("1.0", "end-1c")
+                + "\n(Could not play the audio. Check that "
+                  "the .apkg deck is still in the app folder.)")
 
     def open_chat(self):
         self.ask_button.configure(state="disabled")
