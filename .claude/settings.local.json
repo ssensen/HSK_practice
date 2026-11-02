@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell([Console]::OutputEncoding=[Text.Encoding]::UTF8; $b='https://api.github.com/repos/uranbekanarbaev/hsk-3.0-vocabulary-dataset'; $h=@{'User-Agent'='hsk-practice'}; $r=Invoke-RestMethod \"$b\" -Headers $h; $r | Select-Object description,@{n='license';e={$_.license.spdx_id}},pushed_at,stargazers_count,size,default_branch | Format-List; \\(Invoke-RestMethod \"$b/git/trees/HEAD?recursive=1\" -Headers $h\\).tree | ForEach-Object { \"$\\($_.type\\) $\\($_.size\\) $\\($_.path\\)\" } | Select-Object -First 80; $bytes=\\(Invoke-WebRequest \"$b/readme\" -Headers \\($h+@{Accept='application/vnd.github.raw'}\\) -UseBasicParsing\\).RawContentStream.ToArray\\(\\); [Text.Encoding]::UTF8.GetString\\($bytes\\))"
+    ]
+  }
+}
