@@ -39,11 +39,19 @@ READING_FONT = (CHINESE_FONT, 14)
 READING_SPACING = dict(spacing2=6, spacing3=10)
 TASKBAR_ROOM = 60
 WINDOW_TOP_MARGIN = 10
+# Gap between the popup and the right edge of the screen, leaving room for the window border.
+SCREEN_EDGE_MARGIN = 30
+# How see-through the popup is in gaming mode while the cursor isn't over it (1.0 is solid).
+GAMING_OPACITY = 0.5
 MIN_CHAT_LINES = 4
 BUTTON_STYLE = dict(bg=SURFACE, fg=TEXT, activebackground=HOVER, activeforeground=TEXT,
                     disabledforeground=MUTED, relief="flat", bd=0, highlightthickness=0,
                     padx=10, pady=3)
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+GWL_EXSTYLE = -20
+WS_EX_NOACTIVATE = 0x08000000
+WS_EX_LAYERED = 0x00080000
+LWA_ALPHA = 0x2
 
 user32 = ctypes.windll.user32
 
@@ -53,6 +61,22 @@ def dark_title_bar(win):
     enabled = ctypes.c_int(1)
     ctypes.windll.dwmapi.DwmSetWindowAttribute(
         hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(enabled), ctypes.sizeof(enabled))
+
+
+def set_no_activate(win, enabled):
+    """While on, clicking the window doesn't take focus from the app in front, like a game."""
+    hwnd = user32.GetParent(win.winfo_id())
+    style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    style = style | WS_EX_NOACTIVATE if enabled else style & ~WS_EX_NOACTIVATE
+    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+
+
+def set_opacity(win, opacity):
+    """Tk's own -alpha attribute drops WS_EX_NOACTIVATE, so this sets it through Windows."""
+    hwnd = user32.GetParent(win.winfo_id())
+    style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+    user32.SetLayeredWindowAttributes(hwnd, 0, round(opacity * 255), LWA_ALPHA)
 
 
 def startup_command():
@@ -207,8 +231,14 @@ class QuestionPopup:
 
         win.update_idletasks()
         dark_title_bar(win)
-        x = (win.winfo_screenwidth() - win.winfo_reqwidth()) // 2
-        y = max(40, (win.winfo_screenheight() - win.winfo_reqheight()) // 3)
+        set_no_activate(win, True)
+        if app.settings["gaming_mode"]:
+            set_opacity(win, GAMING_OPACITY)
+            win.bind("<Enter>", lambda _event: set_opacity(win, 1.0))
+            win.bind("<Leave>", lambda _event: self.fade_unless_hovered())
+        # Middle of the right edge, so it covers less of a game or video in the centre.
+        x = win.winfo_screenwidth() - win.winfo_reqwidth() - SCREEN_EDGE_MARGIN
+        y = max(40, (win.winfo_screenheight() - win.winfo_reqheight()) // 2)
         win.geometry(f"+{x}+{y}")
         win.deiconify()
         win.update()
@@ -216,6 +246,15 @@ class QuestionPopup:
         if previous_window:
             user32.SetForegroundWindow(previous_window)
         win.after(ANSWER_LOCK_MS, self.unlock)
+
+    def fade_unless_hovered(self):
+        # Every widget inside the window sends Leave too, so check the cursor really left.
+        win = self.win
+        x, y = win.winfo_pointerxy()
+        inside = (win.winfo_rootx() <= x < win.winfo_rootx() + win.winfo_width()
+                  and win.winfo_rooty() <= y < win.winfo_rooty() + win.winfo_height())
+        if not inside:
+            set_opacity(win, GAMING_OPACITY)
 
     def unlock(self):
         if not self.win.winfo_exists():  # Snoozed before the lock ran out.
@@ -263,10 +302,13 @@ class QuestionPopup:
         self.ask_button.configure(state="disabled")
         self.chat.pack(fill="both", expand=True)
         self.keep_on_screen()
+        # Typing needs keyboard focus, so from here on the window takes focus like a normal one.
+        set_no_activate(self.win, False)
         self.entry.focus_force()
 
     def keep_on_screen(self):
-        """Move the window up, then shorten the chat if it still doesn't fit above the taskbar."""
+        """Move the window up and left, then shorten the chat if it still doesn't fit above the
+        taskbar."""
         win = self.win
         win.update_idletasks()
         lowest_bottom = win.winfo_screenheight() - TASKBAR_ROOM
@@ -280,7 +322,9 @@ class QuestionPopup:
             win.update_idletasks()
         y = max(WINDOW_TOP_MARGIN,
                 min(win.winfo_y(), lowest_bottom - win.winfo_reqheight() - title_bar))
-        win.geometry(f"+{win.winfo_x()}+{y}")
+        # The chat makes the window wider, which would push it past the right edge.
+        x = min(win.winfo_x(), win.winfo_screenwidth() - win.winfo_reqwidth() - SCREEN_EDGE_MARGIN)
+        win.geometry(f"+{x}+{y}")
 
     def write_log(self, text, tag=None):
         self.log.configure(state="normal")
@@ -377,16 +421,20 @@ class App:
         ttk.Checkbutton(frame, text="Play pronunciation after answering", variable=self.autoplay,
                         command=self.apply_autoplay).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.gaming_mode = tk.BooleanVar(value=self.settings["gaming_mode"])
+        ttk.Checkbutton(frame, text="Gaming mode (popup is see-through until you hover over it)",
+                        variable=self.gaming_mode, command=self.apply_gaming_mode).grid(
+            row=6, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self.startup = tk.BooleanVar(value=startup_enabled())
         ttk.Checkbutton(frame, text="Start with Windows", variable=self.startup,
                         command=lambda: set_startup(self.startup.get())).grid(
-            row=6, column=0, columnspan=3, sticky="w", pady=(2, 10))
+            row=7, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
         ttk.Button(frame, text="Question now", command=self.show_question).grid(
-            row=7, column=0, sticky="ew")
+            row=8, column=0, sticky="ew")
         self.pause_button = ttk.Button(frame, text="Pause", command=self.toggle_pause)
-        self.pause_button.grid(row=7, column=1, sticky="ew", padx=6)
-        ttk.Button(frame, text="Quit", command=root.destroy).grid(row=7, column=2, sticky="ew")
+        self.pause_button.grid(row=8, column=1, sticky="ew", padx=6)
+        ttk.Button(frame, text="Quit", command=root.destroy).grid(row=8, column=2, sticky="ew")
 
         self.refresh()
         self.tick()
@@ -411,6 +459,10 @@ class App:
 
     def apply_autoplay(self):
         self.settings["autoplay"] = self.autoplay.get()
+        quiz.save_settings(self.settings)
+
+    def apply_gaming_mode(self):
+        self.settings["gaming_mode"] = self.gaming_mode.get()
         quiz.save_settings(self.settings)
 
     def toggle_pause(self):
