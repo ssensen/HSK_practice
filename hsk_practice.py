@@ -153,7 +153,7 @@ class QuestionPopup:
 
         self.buttons = []
         for option in question.options:
-            button = tk.Button(win, text=option, font=(CHINESE_FONT, 13), anchor="w",
+            button = tk.Button(win, text=option, font=(CHINESE_FONT, 14), anchor="w",
                                justify="left", wraplength=500, takefocus=0, state="disabled",
                                command=lambda o=option: self.answer(o), **BUTTON_STYLE)
             button.bind("<Button-3>", lambda event, o=option: show_menu(
@@ -284,9 +284,12 @@ class QuestionPopup:
 
     def write_log(self, text, tag=None):
         self.log.configure(state="normal")
+        start = self.log.index("end-1c")
         self.log.insert("end", text + "\n\n", tag or ())
         self.log.configure(state="disabled")
-        self.log.see("end")
+        # Show the start of the new message, so a long answer reads from the top.
+        self.log.update_idletasks()
+        self.log.yview(start)
 
     def send(self):
         text = self.entry.get().strip()

@@ -6,6 +6,10 @@ import tempfile
 from pathlib import Path
 
 TIMEOUT_SECONDS = 180
+# Windows access violation. The CLI hits this at random during startup on some PCs, and
+# each failed try only takes a couple of seconds, so it's worth trying again.
+CRASH_EXIT_CODE = 0xC0000005
+MAX_ATTEMPTS = 20
 
 
 def find_claude():
@@ -47,13 +51,19 @@ def ask(question, chosen, history):
     command = [claude, "-p", "--system-prompt", system_prompt(question, chosen),
                "--tools", "", "--no-session-persistence", "--strict-mcp-config",
                "--setting-sources", ""]
-    try:
-        result = subprocess.run(
-            command, input=transcript, capture_output=True, encoding="utf-8", errors="replace",
-            timeout=TIMEOUT_SECONDS, cwd=tempfile.gettempdir(), env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Claude took too long to answer. Please try again.")
+    for _attempt in range(MAX_ATTEMPTS):
+        try:
+            result = subprocess.run(
+                command, input=transcript, capture_output=True, encoding="utf-8", errors="replace",
+                timeout=TIMEOUT_SECONDS, cwd=tempfile.gettempdir(), env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Claude took too long to answer. Please try again.")
+        if result.returncode != CRASH_EXIT_CODE:
+            break
+    else:
+        raise RuntimeError(f"The Claude CLI crashed {MAX_ATTEMPTS} times in a row "
+                           f"(exit code 0x{CRASH_EXIT_CODE:X}). Please try again.")
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"Claude could not answer: {detail or 'unknown error'}")

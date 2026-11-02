@@ -1,4 +1,6 @@
 {
  "interval_minutes": 1,
- "snooze_minutes": 10
+ "snooze_minutes": 10,
+ "max_level": 3,
+ "autoplay": true
 }
