@@ -34,6 +34,12 @@ WRONG_TEXT = "#f28b82"
 YOU_TEXT = "#7db7ff"
 SELECTION = "#3a6ea5"
 TEXT_WIDTH_PX = 520
+READING_FONT = (CHINESE_FONT, 14)
+# Extra pixels between wrapped lines and after each line, for the answer and chat text.
+READING_SPACING = dict(spacing2=6, spacing3=10)
+TASKBAR_ROOM = 60
+WINDOW_TOP_MARGIN = 10
+MIN_CHAT_LINES = 4
 BUTTON_STYLE = dict(bg=SURFACE, fg=TEXT, activebackground=HOVER, activeforeground=TEXT,
                     disabledforeground=MUTED, relief="flat", bd=0, highlightthickness=0,
                     padx=10, pady=3)
@@ -155,7 +161,8 @@ class QuestionPopup:
             button.pack(fill="x", pady=2)
             self.buttons.append(button)
 
-        self.feedback = readonly_label(win, "", 11, TEXT)
+        self.feedback = readonly_label(win, "", READING_FONT[1], TEXT)
+        self.feedback.configure(**READING_SPACING)
         self.feedback.pack(anchor="w", pady=(8, 0))
 
         row = tk.Frame(win, bg=BG)
@@ -178,15 +185,16 @@ class QuestionPopup:
                     **BUTTON_STYLE))
 
         self.chat = tk.Frame(win, bg=BG)
-        self.log = tk.Text(self.chat, height=12, width=62, wrap="word", state="disabled",
-                           font=(CHINESE_FONT, 10), bg=SURFACE, fg=TEXT, relief="flat",
-                           highlightthickness=0, selectbackground=HOVER, padx=8, pady=6)
+        self.log = tk.Text(self.chat, height=10, width=48, wrap="word", state="disabled",
+                           font=READING_FONT, bg=SURFACE, fg=TEXT, relief="flat",
+                           highlightthickness=0, selectbackground=HOVER, padx=10, pady=8,
+                           **READING_SPACING)
         make_copyable(self.log)
         self.log.tag_configure("you", foreground=YOU_TEXT)
         self.log.pack(fill="both", expand=True, pady=(10, 4))
         entry_row = tk.Frame(self.chat, bg=BG)
         entry_row.pack(fill="x")
-        self.entry = tk.Entry(entry_row, font=(CHINESE_FONT, 11), bg=SURFACE, fg=TEXT,
+        self.entry = tk.Entry(entry_row, font=READING_FONT, bg=SURFACE, fg=TEXT,
                               insertbackground=TEXT, relief="flat", highlightthickness=0)
         self.entry.pack(side="left", fill="x", expand=True, ipady=3)
         self.entry.bind("<Return>", lambda _event: self.send())
@@ -239,6 +247,7 @@ class QuestionPopup:
         self.done_button.pack(side="right")
         for button in self.play_buttons:
             button.pack(side="left", padx=(6, 0))
+        self.keep_on_screen()
         if self.app.settings["autoplay"]:
             self.play(self.question.main_audio)
         self.app.refresh()
@@ -253,7 +262,25 @@ class QuestionPopup:
     def open_chat(self):
         self.ask_button.configure(state="disabled")
         self.chat.pack(fill="both", expand=True)
+        self.keep_on_screen()
         self.entry.focus_force()
+
+    def keep_on_screen(self):
+        """Move the window up, then shorten the chat if it still doesn't fit above the taskbar."""
+        win = self.win
+        win.update_idletasks()
+        lowest_bottom = win.winfo_screenheight() - TASKBAR_ROOM
+        title_bar = win.winfo_rooty() - win.winfo_y()
+        excess = win.winfo_reqheight() + title_bar + WINDOW_TOP_MARGIN - lowest_bottom
+        if excess > 0:
+            line_height = tkfont.Font(font=READING_FONT).metrics("linespace") + 6
+            lines = max(MIN_CHAT_LINES,
+                        int(self.log.cget("height")) - (excess // line_height + 1))
+            self.log.configure(height=lines)
+            win.update_idletasks()
+        y = max(WINDOW_TOP_MARGIN,
+                min(win.winfo_y(), lowest_bottom - win.winfo_reqheight() - title_bar))
+        win.geometry(f"+{win.winfo_x()}+{y}")
 
     def write_log(self, text, tag=None):
         self.log.configure(state="normal")
