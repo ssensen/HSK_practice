@@ -535,7 +535,7 @@ class App:
 
         self.settings = quiz.load_settings()
         self.progress = quiz.Progress()
-        self.bank = quiz.load_bank(self.settings["max_level"])
+        self.bank = quiz.load_bank(self.settings["max_level"], self.settings["min_level"])
         self.popup = None
         self.paused = False
         self.next_at = time.time() + self.settings["interval_minutes"] * 60
@@ -559,31 +559,35 @@ class App:
         ttk.Label(frame, text="Include up to HSK").grid(row=4, column=0, sticky="w")
         ttk.Spinbox(frame, from_=1, to=5, width=6, textvariable=self.max_level).grid(
             row=4, column=1, sticky="w", padx=6)
+        self.min_level = tk.StringVar(value=str(self.settings["min_level"]))
+        ttk.Label(frame, text="Include down to HSK").grid(row=5, column=0, sticky="w", pady=4)
+        ttk.Spinbox(frame, from_=1, to=5, width=6, textvariable=self.min_level).grid(
+            row=5, column=1, sticky="w", padx=6)
         ttk.Button(frame, text="Save", command=self.apply_settings).grid(
-            row=2, column=2, rowspan=3, sticky="ns")
+            row=2, column=2, rowspan=4, sticky="ns")
 
         self.autoplay = tk.BooleanVar(value=self.settings["autoplay"])
         ttk.Checkbutton(frame, text="Play pronunciation after answering (word, then sentence)",
                         variable=self.autoplay, command=self.apply_autoplay).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+            row=6, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self.gaming_mode = tk.BooleanVar(value=self.settings["gaming_mode"])
         ttk.Checkbutton(frame, text="Gaming mode (see-through popup, answer with the number pad)",
                         variable=self.gaming_mode, command=self.apply_gaming_mode).grid(
-            row=6, column=0, columnspan=3, sticky="w", pady=(2, 0))
+            row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self.second_monitor = tk.BooleanVar(value=self.settings["second_monitor"])
         ttk.Checkbutton(frame, text="Show the popup on my second monitor",
                         variable=self.second_monitor, command=self.apply_second_monitor).grid(
-            row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
+            row=8, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self.startup = tk.BooleanVar(value=startup_enabled())
         ttk.Checkbutton(frame, text="Start with Windows", variable=self.startup,
                         command=lambda: set_startup(self.startup.get())).grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=(2, 10))
+            row=9, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
         ttk.Button(frame, text="Question now", command=self.show_question).grid(
-            row=9, column=0, sticky="ew")
+            row=10, column=0, sticky="ew")
         self.pause_button = ttk.Button(frame, text="Pause", command=self.toggle_pause)
-        self.pause_button.grid(row=9, column=1, sticky="ew", padx=6)
-        ttk.Button(frame, text="Quit", command=root.destroy).grid(row=9, column=2, sticky="ew")
+        self.pause_button.grid(row=10, column=1, sticky="ew", padx=6)
+        ttk.Button(frame, text="Quit", command=root.destroy).grid(row=10, column=2, sticky="ew")
 
         self.refresh()
         self.tick()
@@ -593,16 +597,18 @@ class App:
             interval = int(self.interval.get())
             snooze = int(self.snooze.get())
             max_level = int(self.max_level.get())
-            if interval < 1 or snooze < 1 or not 1 <= max_level <= 5:
+            min_level = int(self.min_level.get())
+            if interval < 1 or snooze < 1 or not 1 <= min_level <= max_level <= 5:
                 raise ValueError
         except ValueError:
             messagebox.showerror("HSK Practice", "Please enter whole minutes of 1 or more, "
-                                                 "and an HSK level from 1 to 5.")
+                                                 "and HSK levels from 1 to 5, with the "
+                                                 "\"down to\" level no higher than \"up to\".")
             return
         self.settings.update(interval_minutes=interval, snooze_minutes=snooze,
-                             max_level=max_level)
+                             min_level=min_level, max_level=max_level)
         quiz.save_settings(self.settings)
-        self.bank = quiz.load_bank(max_level)
+        self.bank = quiz.load_bank(max_level, min_level)
         self.next_at = time.time() + interval * 60
         self.refresh()
 

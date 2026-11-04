@@ -12,8 +12,8 @@ DATA_DIR = APP_DIR / "data"
 PROGRESS_FILE = APP_DIR / "progress.json"
 SETTINGS_FILE = APP_DIR / "settings.json"
 
-DEFAULT_SETTINGS = {"interval_minutes": 30, "snooze_minutes": 10, "max_level": 3,
-                    "autoplay": True, "gaming_mode": False, "second_monitor": False}
+DEFAULT_SETTINGS = {"interval_minutes": 30, "snooze_minutes": 10, "min_level": 1,
+                    "max_level": 3, "autoplay": True, "gaming_mode": False, "second_monitor": False}
 
 # How long until a question returns, by Leitner box. A wrong answer resets to box 0.
 RETRY_WRONG_SECONDS = 20 * 60
@@ -67,9 +67,9 @@ def save_settings(settings):
     save_json(SETTINGS_FILE, settings)
 
 
-def load_entries(max_level=3):
+def load_entries(max_level=3, min_level=1):
     return [entry for entry in load_json(DATA_DIR / "deck.json", [])
-            if entry["level"] <= max_level]
+            if min_level <= entry["level"] <= max_level]
 
 
 def senses(entry):
@@ -133,9 +133,9 @@ def build_question(entries, entry, kind, question_id):
                     entry["word_audio"], entry["sentence_audio"], option_pinyin)
 
 
-def load_bank(max_level=3):
+def load_bank(max_level=3, min_level=1):
     """Return every question id mapped to a function that builds it with fresh distractors."""
-    entries = load_entries(max_level)
+    entries = load_entries(max_level, min_level)
     counts = collections.Counter(entry["word"] for entry in entries)
     bank = {}
     for entry in entries:
