@@ -32,6 +32,28 @@ class BankTests(unittest.TestCase):
                 self.assertIn("___", question.prompt)
                 self.assertTrue(question.hint)
 
+    def test_questions_show_pinyin_not_english(self):
+        # Words with two readings, like 还 (hái, huán), are told apart by the card's key.
+        entries = {}
+        for entry in quiz.load_entries(3):
+            entries[entry["word"]] = entries[f"{entry['word']}#{entry['key']}"] = entry
+        kinds = set()
+        for build in quiz.load_bank(3).values():
+            question = build()
+            kinds.add(question.kind)
+            if question.kind == "pinyin":
+                self.assertEqual(question.hint, "")  # The pinyin is the answer.
+                continue
+            entry = entries[question.id.split(":", 1)[1]]
+            expected = entry["pinyin"] if question.kind == "meaning" else entry["sentence_pinyin"]
+            if question.kind == "word":
+                self.assertEqual(question.option_pinyin[question.answer], entry["pinyin"])
+                self.assertEqual(set(question.option_pinyin), set(question.options))
+            else:
+                self.assertEqual(question.hint, expected)
+                self.assertNotIn(entry["sentence_meaning"] or "-", question.hint)
+        self.assertEqual(kinds, {"meaning", "word", "pinyin", "cloze", "sentence"})
+
     def test_distractors_never_share_a_sense_with_the_answer(self):
         entries = quiz.load_entries(3)
         target = next(entry for entry in entries if entry["word"] == "我")

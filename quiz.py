@@ -13,7 +13,7 @@ PROGRESS_FILE = APP_DIR / "progress.json"
 SETTINGS_FILE = APP_DIR / "settings.json"
 
 DEFAULT_SETTINGS = {"interval_minutes": 30, "snooze_minutes": 10, "max_level": 3,
-                    "autoplay": True, "gaming_mode": False}
+                    "autoplay": True, "gaming_mode": False, "second_monitor": False}
 
 # How long until a question returns, by Leitner box. A wrong answer resets to box 0.
 RETRY_WRONG_SECONDS = 20 * 60
@@ -33,9 +33,10 @@ class Question:
     answer: str
     options: list
     explain: str
-    hint: str = ""
+    hint: str = ""  # Pinyin for the Chinese in the prompt, unless that would give it away.
     word_audio: str = None
     sentence_audio: str = None
+    option_pinyin: dict = None  # Pinyin shown beside each option, when the options are words.
 
     @property
     def main_audio(self):
@@ -77,7 +78,7 @@ def senses(entry):
 
 def can_blank(entry):
     """The deck's blanks are only trusted if the word restores the exact sentence."""
-    return ("[ ]" in entry["cloze"] and entry["sentence_meaning"]
+    return ("[ ]" in entry["cloze"] and entry["sentence_pinyin"]
             and entry["cloze"].replace("[ ]", entry["word"]) == entry["sentence"])
 
 
@@ -92,6 +93,8 @@ def pick_wrong(entries, entry, field, same_pos=False, avoid_text=""):
     """Three distractors that can't also be right: other words, with no shared sense."""
     pool = [other for other in entries
             if other["word"] != entry["word"] and other[field] and other[field] != entry[field]
+            # A word that sounds the same would also match the pinyin shown with the question.
+            and other["pinyin"].lower() != entry["pinyin"].lower()
             and not senses(other) & senses(entry) and other["word"] not in avoid_text]
     if same_pos:
         matching = [other for other in pool if other["pos"] == entry["pos"]]
@@ -102,28 +105,32 @@ def pick_wrong(entries, entry, field, same_pos=False, avoid_text=""):
 
 def build_question(entries, entry, kind, question_id):
     word, pinyin, meaning = entry["word"], entry["pinyin"], entry["meaning"]
-    hint = ""
+    hint, option_pinyin = "", None
     if kind == "meaning":
-        prompt, answer = f"“{word}” 是什么意思？", meaning
+        prompt, answer, hint = f"“{word}” 是什么意思？", meaning, pinyin
         wrong = pick_wrong(entries, entry, "meaning")
     elif kind == "word":
         prompt, answer = f"Which word means “{meaning}”?", word
         wrong = pick_wrong(entries, entry, "word", same_pos=True)
     elif kind == "pinyin":
+        # No pinyin hint here, since the pinyin is the answer.
         prompt, answer = f"“{word}” 怎么读？", pinyin
         wrong = pick_wrong(entries, entry, "pinyin")
     elif kind == "cloze":
-        prompt, answer = entry["cloze"].replace("[ ]", "___"), word
-        hint = entry["sentence_meaning"]
+        prompt, answer, hint = entry["cloze"].replace("[ ]", "___"), word, entry["sentence_pinyin"]
         wrong = pick_wrong(entries, entry, "word", same_pos=True, avoid_text=entry["sentence"])
     else:
-        prompt, answer = entry["sentence"], entry["sentence_meaning"]
-        hint = "这句话是什么意思？"
+        prompt, answer, hint = entry["sentence"], entry["sentence_meaning"], entry["sentence_pinyin"]
         wrong = pick_wrong(entries, entry, "sentence_meaning")
     options = [answer] + wrong
     random.shuffle(options)
+    if kind == "word":
+        # Not for blanks: the sentence pinyin would show which option fits without reading it.
+        readings = {other["word"]: other["pinyin"] for other in entries}
+        option_pinyin = {option: readings[option] for option in wrong}
+        option_pinyin[word] = pinyin  # Its own reading, for words like 长 that have two.
     return Question(question_id, kind, prompt, answer, options, describe(entry), hint,
-                    entry["word_audio"], entry["sentence_audio"])
+                    entry["word_audio"], entry["sentence_audio"], option_pinyin)
 
 
 def load_bank(max_level=3):
@@ -137,7 +144,7 @@ def load_bank(max_level=3):
         kinds = ["meaning", "word", "pinyin"]
         if can_blank(entry):
             kinds.append("cloze")
-        if entry["sentence"] and entry["sentence_meaning"]:
+        if entry["sentence"] and entry["sentence_meaning"] and entry["sentence_pinyin"]:
             kinds.append("sentence")
         for kind in kinds:
             question_id = f"{kind}:{name}"

@@ -1,12 +1,15 @@
 """HSK 3 practice: pops up a question on a timer. Run with Start HSK Practice.bat."""
 import ctypes
+import math
 import queue
+import re
 import sys
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
 import winreg
+from ctypes import wintypes
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -35,14 +38,23 @@ YOU_TEXT = "#7db7ff"
 SELECTION = "#3a6ea5"
 TEXT_WIDTH_PX = 520
 READING_FONT = (CHINESE_FONT, 14)
+# Chinese characters in the answer are shown larger than the English and pinyin around them.
+ANSWER_CHINESE_FONT = (CHINESE_FONT, 18)
+# Chinese characters and Chinese punctuation, such as ，。？ and full-width brackets.
+CHINESE_RUN = re.compile(r"[　-〿一-鿿＀-￯]+")
 # Extra pixels between wrapped lines and after each line, for the answer and chat text.
 READING_SPACING = dict(spacing2=6, spacing3=10)
-TASKBAR_ROOM = 60
+
+# Used to centre the window before it is first shown, when Windows can't measure the title bar.
+TITLE_BAR_GUESS = 31
+# Gap between the word and the example sentence when both play after answering.
+SENTENCE_PAUSE_MS = 400
+CLIP_LENGTH_GUESS_MS = 1500
 WINDOW_TOP_MARGIN = 10
 # Gap between the popup and the right edge of the screen, leaving room for the window border.
 SCREEN_EDGE_MARGIN = 30
-# How see-through the popup is in gaming mode while the cursor isn't over it (1.0 is solid).
-GAMING_OPACITY = 0.5
+# How see-through the popup is in gaming mode (1.0 is solid).
+GAMING_OPACITY = 0.75
 MIN_CHAT_LINES = 4
 BUTTON_STYLE = dict(bg=SURFACE, fg=TEXT, activebackground=HOVER, activeforeground=TEXT,
                     disabledforeground=MUTED, relief="flat", bd=0, highlightthickness=0,
@@ -52,6 +64,16 @@ GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_LAYERED = 0x00080000
 LWA_ALPHA = 0x2
+WM_HOTKEY = 0x0312
+WM_QUIT = 0x0012
+MOD_NOREPEAT = 0x4000
+# Gaming mode keys. Games like Skyrim keep the mouse, so the number pad answers instead.
+# These are Windows virtual-key codes, which need Num Lock on.
+VK_NUMPAD0 = 0x60
+ANSWER_KEYS = [VK_NUMPAD0 + number for number in range(1, 5)]  # Numpad 1 to 4
+SNOOZE_OR_DONE_KEY = VK_NUMPAD0
+REPLAY_KEY = VK_NUMPAD0 + 5
+GAMING_KEYS_TEXT = "Number pad: 1–4 answer · 0 snooze / done · 5 replay audio"
 
 user32 = ctypes.windll.user32
 
@@ -77,6 +99,72 @@ def set_opacity(win, opacity):
     style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
     user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
     user32.SetLayeredWindowAttributes(hwnd, 0, round(opacity * 255), LWA_ALPHA)
+
+
+class GlobalHotkeys:
+    """Keys that reach this app even while a fullscreen game has focus, until stop()."""
+
+    def __init__(self, keys):
+        self.pressed = queue.Queue()
+        self.failed = []
+        self.thread_id = None
+        ready = threading.Event()
+
+        def run():
+            # Hotkeys belong to the thread that registers them and arrive in its message queue.
+            self.thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+            message = wintypes.MSG()
+            user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 0)  # Creates the queue.
+            for key in keys:
+                if not user32.RegisterHotKey(None, key, MOD_NOREPEAT, key):
+                    self.failed.append(key)  # Another app already uses this key.
+            ready.set()
+            while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+                if message.message == WM_HOTKEY:
+                    self.pressed.put(message.wParam)
+            for key in keys:
+                user32.UnregisterHotKey(None, key)
+
+        threading.Thread(target=run, daemon=True).start()
+        ready.wait()
+
+    def stop(self):
+        user32.PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0)
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+
+MONITORINFOF_PRIMARY = 1
+MonitorEnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                                     ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+
+def monitor_work_areas():
+    """(left, top, right, bottom) of each monitor without its taskbar, main monitor first."""
+    areas = []
+
+    def found(monitor, _dc, _rect, _data):
+        info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+        user32.GetMonitorInfoW(monitor, ctypes.byref(info))
+        work = info.rcWork
+        area = (work.left, work.top, work.right, work.bottom)
+        if info.dwFlags & MONITORINFOF_PRIMARY:
+            areas.insert(0, area)
+        else:
+            areas.append(area)
+        return True
+
+    user32.EnumDisplayMonitors(None, None, MonitorEnumProc(found), 0)
+    return areas
+
+
+def popup_area(second_monitor):
+    """Falls back to the main monitor when there's no second one plugged in."""
+    areas = monitor_work_areas()
+    return areas[1] if second_monitor and len(areas) > 1 else areas[0]
 
 
 def startup_command():
@@ -127,6 +215,13 @@ def make_copyable(text_widget):
 def fit_height(text_widget, _event=None):
     lines = text_widget.count("1.0", "end", "displaylines")
     height = lines[0] if lines else 1
+    if text_widget.tag_ranges("chinese"):
+        # Height is in lines of the widget's font, so the larger Chinese text needs more of
+        # them. Work out how many from the pixel height of the text.
+        pixels = text_widget.count("1.0", "end", "ypixels")
+        per_line = text_widget.winfo_reqheight() / int(text_widget.cget("height"))
+        if pixels and per_line > 0:
+            height = max(height, math.ceil(pixels[0] / per_line))
     if height != int(text_widget.cget("height")):
         text_widget.configure(height=height)
 
@@ -161,6 +256,9 @@ class QuestionPopup:
         self.chosen = None
         self.history = []
         self.replies = queue.Queue()
+        self.hotkeys = None
+        self.queued_audio = None
+        gaming = app.settings["gaming_mode"]
 
         previous_window = user32.GetForegroundWindow()
         self.win = win = tk.Toplevel(app.root)
@@ -172,21 +270,31 @@ class QuestionPopup:
 
         readonly_label(win, question.prompt, 18, TEXT).pack(anchor="w")
         if question.hint:
-            readonly_label(win, question.hint, 11, MUTED).pack(anchor="w")
+            readonly_label(win, question.hint, 13, MUTED).pack(anchor="w")
         tk.Frame(win, height=10, bg=BG).pack()
 
         self.buttons = []
-        for option in question.options:
-            button = tk.Button(win, text=option, font=(CHINESE_FONT, 14), anchor="w",
+        for number, option in enumerate(question.options, 1):
+            label = option
+            if question.option_pinyin:
+                label = f"{option}   {question.option_pinyin[option]}"
+            button = tk.Button(win, text=f"{number}   {label}" if gaming else label,
+                               font=(CHINESE_FONT, 14), anchor="w",
                                justify="left", wraplength=500, takefocus=0, state="disabled",
                                command=lambda o=option: self.answer(o), **BUTTON_STYLE)
             button.bind("<Button-3>", lambda event, o=option: show_menu(
                 event, [("Copy", lambda: copy_to_clipboard(event.widget, o))]))
             button.pack(fill="x", pady=2)
             self.buttons.append(button)
+        if gaming:
+            self.hotkeys = GlobalHotkeys(ANSWER_KEYS + [SNOOZE_OR_DONE_KEY, REPLAY_KEY])
+            keys_text = (GAMING_KEYS_TEXT if not self.hotkeys.failed else
+                         "Some number pad keys are in use by another app, so use the mouse.")
+            readonly_label(win, keys_text, 10, MUTED).pack(anchor="w", pady=(4, 0))
 
         self.feedback = readonly_label(win, "", READING_FONT[1], TEXT)
         self.feedback.configure(**READING_SPACING)
+        self.feedback.tag_configure("chinese", font=ANSWER_CHINESE_FONT)
         self.feedback.pack(anchor="w", pady=(8, 0))
 
         row = tk.Frame(win, bg=BG)
@@ -232,29 +340,44 @@ class QuestionPopup:
         win.update_idletasks()
         dark_title_bar(win)
         set_no_activate(win, True)
-        if app.settings["gaming_mode"]:
+        if gaming:
             set_opacity(win, GAMING_OPACITY)
-            win.bind("<Enter>", lambda _event: set_opacity(win, 1.0))
-            win.bind("<Leave>", lambda _event: self.fade_unless_hovered())
-        # Middle of the right edge, so it covers less of a game or video in the centre.
-        x = win.winfo_screenwidth() - win.winfo_reqwidth() - SCREEN_EDGE_MARGIN
-        y = max(40, (win.winfo_screenheight() - win.winfo_reqheight()) // 2)
-        win.geometry(f"+{x}+{y}")
+        self.area = popup_area(app.settings["second_monitor"])
+        self.place()
         win.deiconify()
         win.update()
+        # The text boxes only measure their real height once they are on screen.
+        self.place()
         # Hand focus back so keystrokes in progress go to the work app, not this window.
         if previous_window:
             user32.SetForegroundWindow(previous_window)
         win.after(ANSWER_LOCK_MS, self.unlock)
+        if self.hotkeys:
+            self.poll_hotkeys()
 
-    def fade_unless_hovered(self):
-        # Every widget inside the window sends Leave too, so check the cursor really left.
-        win = self.win
-        x, y = win.winfo_pointerxy()
-        inside = (win.winfo_rootx() <= x < win.winfo_rootx() + win.winfo_width()
-                  and win.winfo_rooty() <= y < win.winfo_rooty() + win.winfo_height())
-        if not inside:
-            set_opacity(win, GAMING_OPACITY)
+    def poll_hotkeys(self):
+        if not self.win.winfo_exists():
+            return
+        while not self.hotkeys.pressed.empty():
+            self.on_hotkey(self.hotkeys.pressed.get())
+        if self.win.winfo_exists():  # A key may have just closed it.
+            self.win.after(50, self.poll_hotkeys)
+
+    def on_hotkey(self, key):
+        if key in ANSWER_KEYS:
+            button = self.buttons[ANSWER_KEYS.index(key)]
+            if str(button.cget("state")) == "normal":  # Unlocked and not yet answered.
+                button.invoke()
+        elif key == SNOOZE_OR_DONE_KEY:
+            self.snooze() if self.chosen is None else self.finish()
+        elif key == REPLAY_KEY and self.chosen is not None:  # Before answering it'd give it away.
+            self.play_after_answer()
+
+    def close(self):
+        self.cancel_queued_audio()
+        if self.hotkeys:
+            self.hotkeys.stop()
+        self.win.destroy()
 
     def unlock(self):
         if not self.win.winfo_exists():  # Snoozed before the lock ran out.
@@ -272,58 +395,80 @@ class QuestionPopup:
         self.chosen = option
         correct = option == self.question.answer
         self.app.progress.record(self.question.id, correct)
-        for button in self.buttons:
-            text = button.cget("text")
+        for button, text in zip(self.buttons, self.question.options):
             if text == self.question.answer:
                 button.configure(bg=RIGHT_BG, disabledforeground=TEXT)
             elif text == option:
                 button.configure(bg=WRONG_BG, disabledforeground=TEXT)
             button.configure(state="disabled")
         heading = "Correct!" if correct else f"Not quite. The answer is: {self.question.answer}"
-        set_readonly_text(self.feedback, f"{heading}\n{self.question.explain}",
+        self.set_feedback(f"{heading}\n{self.question.explain}",
                           RIGHT_TEXT if correct else WRONG_TEXT)
         self.snooze_button.pack_forget()
         self.done_button.pack(side="right")
         for button in self.play_buttons:
             button.pack(side="left", padx=(6, 0))
-        self.keep_on_screen()
+        self.place()
         if self.app.settings["autoplay"]:
-            self.play(self.question.main_audio)
+            self.play_after_answer()
         self.app.refresh()
 
+    def set_feedback(self, text, fg=None):
+        set_readonly_text(self.feedback, text, fg)
+        for run in CHINESE_RUN.finditer(text):
+            self.feedback.tag_add("chinese", f"1.0 + {run.start()} chars",
+                                  f"1.0 + {run.end()} chars")
+        fit_height(self.feedback)  # The larger characters can wrap onto more lines.
+
+    def play_after_answer(self):
+        """Sentence questions play the sentence. Word questions play the word, then the
+        example sentence."""
+        question = self.question
+        if question.kind in quiz.SENTENCE_KINDS or not question.sentence_audio:
+            self.play(question.main_audio)
+            return
+        self.play(question.word_audio)
+        delay = (audio.length_ms() or CLIP_LENGTH_GUESS_MS) + SENTENCE_PAUSE_MS
+        self.queued_audio = self.win.after(delay, lambda: self.play(question.sentence_audio))
+
+    def cancel_queued_audio(self):
+        if self.queued_audio:
+            self.win.after_cancel(self.queued_audio)
+            self.queued_audio = None
+
     def play(self, clip):
+        self.cancel_queued_audio()  # Pressing Play stops the sentence that was coming next.
         if not audio.play(clip):
-            set_readonly_text(
-                self.feedback, self.feedback.get("1.0", "end-1c")
+            self.set_feedback(
+                self.feedback.get("1.0", "end-1c")
                 + "\n(Could not play the audio. Check that "
                   "the .apkg deck is still in the app folder.)")
 
     def open_chat(self):
         self.ask_button.configure(state="disabled")
         self.chat.pack(fill="both", expand=True)
-        self.keep_on_screen()
+        self.place()
         # Typing needs keyboard focus, so from here on the window takes focus like a normal one.
         set_no_activate(self.win, False)
         self.entry.focus_force()
 
-    def keep_on_screen(self):
-        """Move the window up and left, then shorten the chat if it still doesn't fit above the
-        taskbar."""
+    def place(self):
+        """Centre the window on the right edge of its monitor, so it covers less of a game or
+        video in the middle. If it's too tall to fit above the taskbar, shorten the chat."""
         win = self.win
         win.update_idletasks()
-        lowest_bottom = win.winfo_screenheight() - TASKBAR_ROOM
-        title_bar = win.winfo_rooty() - win.winfo_y()
-        excess = win.winfo_reqheight() + title_bar + WINDOW_TOP_MARGIN - lowest_bottom
+        left, top, right, bottom = self.area
+        title_bar = (win.winfo_rooty() - win.winfo_y()) or TITLE_BAR_GUESS
+        excess = win.winfo_reqheight() + title_bar + 2 * WINDOW_TOP_MARGIN - (bottom - top)
         if excess > 0:
             line_height = tkfont.Font(font=READING_FONT).metrics("linespace") + 6
             lines = max(MIN_CHAT_LINES,
                         int(self.log.cget("height")) - (excess // line_height + 1))
             self.log.configure(height=lines)
             win.update_idletasks()
-        y = max(WINDOW_TOP_MARGIN,
-                min(win.winfo_y(), lowest_bottom - win.winfo_reqheight() - title_bar))
-        # The chat makes the window wider, which would push it past the right edge.
-        x = min(win.winfo_x(), win.winfo_screenwidth() - win.winfo_reqwidth() - SCREEN_EDGE_MARGIN)
+        height = win.winfo_reqheight() + title_bar
+        y = top + max(WINDOW_TOP_MARGIN, (bottom - top - height) // 2)
+        x = right - win.winfo_reqwidth() - SCREEN_EDGE_MARGIN
         win.geometry(f"+{x}+{y}")
 
     def write_log(self, text, tag=None):
@@ -372,12 +517,12 @@ class QuestionPopup:
         self.send_button.configure(state="normal", text="Send")
 
     def snooze(self):
-        self.win.destroy()
+        self.close()
         self.app.popup_closed(self.app.settings["snooze_minutes"])
 
     def finish(self):
         audio.stop()
-        self.win.destroy()
+        self.close()
         self.app.popup_closed(self.app.settings["interval_minutes"])
 
 
@@ -418,23 +563,27 @@ class App:
             row=2, column=2, rowspan=3, sticky="ns")
 
         self.autoplay = tk.BooleanVar(value=self.settings["autoplay"])
-        ttk.Checkbutton(frame, text="Play pronunciation after answering", variable=self.autoplay,
-                        command=self.apply_autoplay).grid(
+        ttk.Checkbutton(frame, text="Play pronunciation after answering (word, then sentence)",
+                        variable=self.autoplay, command=self.apply_autoplay).grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self.gaming_mode = tk.BooleanVar(value=self.settings["gaming_mode"])
-        ttk.Checkbutton(frame, text="Gaming mode (popup is see-through until you hover over it)",
+        ttk.Checkbutton(frame, text="Gaming mode (see-through popup, answer with the number pad)",
                         variable=self.gaming_mode, command=self.apply_gaming_mode).grid(
             row=6, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        self.second_monitor = tk.BooleanVar(value=self.settings["second_monitor"])
+        ttk.Checkbutton(frame, text="Show the popup on my second monitor",
+                        variable=self.second_monitor, command=self.apply_second_monitor).grid(
+            row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self.startup = tk.BooleanVar(value=startup_enabled())
         ttk.Checkbutton(frame, text="Start with Windows", variable=self.startup,
                         command=lambda: set_startup(self.startup.get())).grid(
-            row=7, column=0, columnspan=3, sticky="w", pady=(2, 10))
+            row=8, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
         ttk.Button(frame, text="Question now", command=self.show_question).grid(
-            row=8, column=0, sticky="ew")
+            row=9, column=0, sticky="ew")
         self.pause_button = ttk.Button(frame, text="Pause", command=self.toggle_pause)
-        self.pause_button.grid(row=8, column=1, sticky="ew", padx=6)
-        ttk.Button(frame, text="Quit", command=root.destroy).grid(row=8, column=2, sticky="ew")
+        self.pause_button.grid(row=9, column=1, sticky="ew", padx=6)
+        ttk.Button(frame, text="Quit", command=root.destroy).grid(row=9, column=2, sticky="ew")
 
         self.refresh()
         self.tick()
@@ -463,6 +612,10 @@ class App:
 
     def apply_gaming_mode(self):
         self.settings["gaming_mode"] = self.gaming_mode.get()
+        quiz.save_settings(self.settings)
+
+    def apply_second_monitor(self):
+        self.settings["second_monitor"] = self.second_monitor.get()
         quiz.save_settings(self.settings)
 
     def toggle_pause(self):

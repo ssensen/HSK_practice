@@ -1,6 +1,8 @@
 {
- "interval_minutes": 2,
+ "interval_minutes": 5,
  "snooze_minutes": 10,
  "max_level": 3,
- "autoplay": true
+ "autoplay": true,
+ "gaming_mode": false,
+ "second_monitor": false
 }

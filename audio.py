@@ -16,6 +16,15 @@ def stop():
     mci(f"close {ALIAS}", None, 0, None)
 
 
+def length_ms():
+    """Length of the clip that was played last, or 0 if it isn't known."""
+    buffer = ctypes.create_unicode_buffer(32)
+    mci(f"set {ALIAS} time format milliseconds", None, 0, None)
+    if mci(f"status {ALIAS} length", buffer, len(buffer), None) != 0:
+        return 0
+    return int(buffer.value) if buffer.value.isdigit() else 0
+
+
 def play(member):
     """Play one clip by its name inside the deck. Returns False if it can't be played."""
     stop()
