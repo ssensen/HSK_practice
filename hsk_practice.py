@@ -244,7 +244,7 @@ class QuestionPopup:
 
         readonly_label(win, question.prompt, 18, TEXT).pack(anchor="w")
         if question.hint:
-            readonly_label(win, question.hint, 12, MUTED).pack(anchor="w")
+            readonly_label(win, question.hint, 11, MUTED).pack(anchor="w")
         tk.Frame(win, height=10, bg=BG).pack()
 
         self.buttons = []
