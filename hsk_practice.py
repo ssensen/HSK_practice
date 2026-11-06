@@ -242,9 +242,9 @@ class QuestionPopup:
         win.protocol("WM_DELETE_WINDOW", self.on_close_attempt)
         win.configure(padx=18, pady=14, bg=BG)
 
-        readonly_label(win, question.prompt, 18, TEXT).pack(anchor="w")
         if question.hint:
             readonly_label(win, question.hint, 11, MUTED).pack(anchor="w")
+        readonly_label(win, question.prompt, 18, TEXT).pack(anchor="w")
         tk.Frame(win, height=10, bg=BG).pack()
 
         self.buttons = []
