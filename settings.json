@@ -5,5 +5,5 @@
  "max_level": 3,
  "autoplay": true,
  "gaming_mode": false,
- "second_monitor": true
+ "second_monitor": false
 }
