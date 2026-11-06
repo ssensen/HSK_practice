@@ -85,7 +85,7 @@ def can_blank(entry):
 def describe(entry):
     lines = [f"{entry['word']} ({entry['pinyin']}): {entry['meaning']}"]
     if entry["sentence"]:
-        lines += [entry["sentence"], entry["sentence_pinyin"], entry["sentence_meaning"]]
+        lines += [entry["sentence_pinyin"], entry["sentence"], entry["sentence_meaning"]]
     return "\n".join(line for line in lines if line)
 
 
