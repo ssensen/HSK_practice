@@ -3,23 +3,19 @@ import ctypes
 import math
 import queue
 import re
-import sys
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
-import winreg
 from ctypes import wintypes
-from pathlib import Path
 from tkinter import messagebox, ttk
 
 import audio
 import quiz
+import sync
 import tutor
 
 CHINESE_FONT = "Microsoft YaHei UI"
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_VALUE = "HSK Practice"
 MUTEX_NAME = "HSKPracticeSingleInstance"
 ERROR_ALREADY_EXISTS = 183
 # Stops a click meant for the window underneath from answering the question.
@@ -165,28 +161,6 @@ def popup_area(second_monitor):
     """Falls back to the main monitor when there's no second one plugged in."""
     areas = monitor_work_areas()
     return areas[1] if second_monitor and len(areas) > 1 else areas[0]
-
-
-def startup_command():
-    pythonw = Path(sys.executable).with_name("pythonw.exe")
-    return f'"{pythonw}" "{Path(__file__).resolve()}"'
-
-
-def startup_enabled(value_name=RUN_VALUE):
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            winreg.QueryValueEx(key, value_name)
-        return True
-    except OSError:
-        return False
-
-
-def set_startup(enabled, value_name=RUN_VALUE):
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-        if enabled:
-            winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, startup_command())
-        elif startup_enabled(value_name):
-            winreg.DeleteValue(key, value_name)
 
 
 def show_menu(event, actions):
@@ -577,17 +551,13 @@ class App:
         self.second_monitor = tk.BooleanVar(value=self.settings["second_monitor"])
         ttk.Checkbutton(frame, text="Show the popup on my second monitor",
                         variable=self.second_monitor, command=self.apply_second_monitor).grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=(2, 0))
-        self.startup = tk.BooleanVar(value=startup_enabled())
-        ttk.Checkbutton(frame, text="Start with Windows", variable=self.startup,
-                        command=lambda: set_startup(self.startup.get())).grid(
-            row=9, column=0, columnspan=3, sticky="w", pady=(2, 10))
+            row=8, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
         ttk.Button(frame, text="Question now", command=self.show_question).grid(
-            row=10, column=0, sticky="ew")
+            row=9, column=0, sticky="ew")
         self.pause_button = ttk.Button(frame, text="Pause", command=self.toggle_pause)
-        self.pause_button.grid(row=10, column=1, sticky="ew", padx=6)
-        ttk.Button(frame, text="Quit", command=root.destroy).grid(row=10, column=2, sticky="ew")
+        self.pause_button.grid(row=9, column=1, sticky="ew", padx=6)
+        ttk.Button(frame, text="Quit", command=self.quit).grid(row=9, column=2, sticky="ew")
 
         self.refresh()
         self.tick()
@@ -659,6 +629,16 @@ class App:
             minutes, seconds = divmod(max(0, int(self.next_at - time.time())), 60)
             self.status.configure(text=f"Next question in {minutes}:{seconds:02d}")
         self.root.after(1000, self.tick)
+
+    def quit(self):
+        self.status.configure(text="Saving to GitHub…")
+        self.root.update()
+        try:
+            sync.push_changes()
+        except RuntimeError as error:
+            messagebox.showwarning("HSK Practice", "Couldn't save to GitHub, so the other PC "
+                                                   f"won't get these changes yet.\n\n{error}")
+        self.root.destroy()
 
     def run(self):
         self.root.mainloop()
