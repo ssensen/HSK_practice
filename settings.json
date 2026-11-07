@@ -3,7 +3,7 @@
  "snooze_minutes": 10,
  "min_level": 2,
  "max_level": 3,
- "autoplay": false,
+ "autoplay": true,
  "gaming_mode": false,
  "second_monitor": false
 }
