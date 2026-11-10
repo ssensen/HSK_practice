@@ -314,14 +314,16 @@ class QuestionPopup:
         win.update_idletasks()
         dark_title_bar(win)
         set_no_activate(win, True)
-        if gaming:
-            set_opacity(win, GAMING_OPACITY)
+        # Shown invisible first: the text boxes only measure their real height once they are
+        # on screen, and this way the window doesn't appear at the wrong size and then jump.
+        set_opacity(win, 0)
         self.area = popup_area(app.settings["second_monitor"])
         self.place()
         win.deiconify()
         win.update()
-        # The text boxes only measure their real height once they are on screen.
         self.place()
+        win.update_idletasks()
+        set_opacity(win, GAMING_OPACITY if gaming else 1.0)
         # Hand focus back so keystrokes in progress go to the work app, not this window.
         if previous_window:
             user32.SetForegroundWindow(previous_window)
@@ -417,6 +419,7 @@ class QuestionPopup:
                 self.feedback.get("1.0", "end-1c")
                 + "\n(Could not play the audio. Check that "
                   "the .apkg deck is still in the app folder.)")
+            self.place()
 
     def open_chat(self):
         self.ask_button.configure(state="disabled")
@@ -442,8 +445,12 @@ class QuestionPopup:
             win.update_idletasks()
         height = win.winfo_reqheight() + title_bar
         y = top + max(WINDOW_TOP_MARGIN, (bottom - top - height) // 2)
-        x = right - win.winfo_reqwidth() - SCREEN_EDGE_MARGIN
-        win.geometry(f"+{x}+{y}")
+        width = win.winfo_reqwidth()
+        x = right - width - SCREEN_EDGE_MARGIN
+        # Size and position together, so Windows doesn't show the grown window in the old spot
+        # before moving it. Once the size is set here, the window keeps it until the next call,
+        # so anything that changes the content's size has to call this again.
+        win.geometry(f"{width}x{win.winfo_reqheight()}+{x}+{y}")
 
     def write_log(self, text, tag=None):
         self.log.configure(state="normal")
