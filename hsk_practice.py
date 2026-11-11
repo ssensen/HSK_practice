@@ -280,8 +280,10 @@ class QuestionPopup:
             row, text=f"Snooze {app.settings['snooze_minutes']} min", takefocus=0,
             command=self.snooze, **BUTTON_STYLE)
         self.snooze_button.pack(side="left", padx=6)
+        # Bigger than the other buttons, so it's easy to hit after answering.
         self.done_button = tk.Button(row, text="Done", takefocus=0, command=self.finish,
-                                     **BUTTON_STYLE)
+                                     **{**BUTTON_STYLE, "padx": 28, "pady": 8},
+                                     font=("Segoe UI", 13, "bold"))
         self.play_buttons = []
         for label, clip in (("Play word", question.word_audio),
                             ("Play sentence", question.sentence_audio)):
