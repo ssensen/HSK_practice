@@ -627,7 +627,9 @@ class App:
         stats = self.progress.stats(self.bank)
         self.stats.configure(text=(
             f"Today: {stats['today']} questions   Accuracy: {stats['accuracy']}%\n"
-            f"Remembered: {stats['learned']} of {stats['total']}"))
+            f"Answered: {stats['answered']} times, {stats['seen']} different questions\n"
+            f"Remembered: {stats['learned']} of {stats['total']} "
+            f"(right twice in a row or more)"))
 
     def tick(self):
         if not self.paused and not self.popup and time.time() >= self.next_at:

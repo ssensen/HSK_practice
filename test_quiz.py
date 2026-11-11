@@ -106,6 +106,17 @@ class ProgressTests(unittest.TestCase):
         self.progress.record("cloze:a", True, now=0)
         self.assertEqual(quiz.Progress(self.path).items["cloze:a"]["right"], 1)
 
+    def test_stats_count_every_answer_and_each_question_once(self):
+        NOW = 1_790_000_000  # Windows can't work out a midnight before 1970.
+        self.progress.record("cloze:a", True, now=NOW)
+        self.progress.record("cloze:a", False, now=NOW)
+        self.progress.record("meaning:b", True, now=NOW)
+        self.progress.record("pinyin:z", True, now=NOW)  # A level that isn't being practised.
+        stats = self.progress.stats(self.bank, now=NOW)
+        self.assertEqual(stats["answered"], 4)
+        self.assertEqual(stats["seen"], 2)
+        self.assertEqual(stats["accuracy"], 75)
+
 
 if __name__ == "__main__":
     unittest.main()

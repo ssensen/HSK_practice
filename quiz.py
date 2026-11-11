@@ -200,6 +200,8 @@ class Progress:
             "answered": total,
             "accuracy": round(100 * right / total) if total else 0,
             "today": sum(1 for item in self.items.values() if item["last"] >= midnight),
+            # Different questions answered at least once, at the levels being practised.
+            "seen": sum(1 for qid in self.items if qid in bank),
             "learned": sum(1 for qid, item in self.items.items()
                            if qid in bank and item["box"] >= 2),
             "total": len(bank),
