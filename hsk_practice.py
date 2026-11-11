@@ -378,8 +378,9 @@ class QuestionPopup:
                 button.configure(bg=WRONG_BG, disabledforeground=TEXT)
             button.configure(state="disabled")
         heading = "Correct!" if correct else f"Not quite. The answer is: {self.question.answer}"
-        self.set_feedback(f"{heading}\n{self.question.explain}",
-                          RIGHT_TEXT if correct else WRONG_TEXT)
+        # Only the heading is green or red; the word and example below it stay white.
+        self.feedback.tag_configure("heading", foreground=RIGHT_TEXT if correct else WRONG_TEXT)
+        self.set_feedback(f"{heading}\n{self.question.explain}", TEXT)
         self.snooze_button.pack_forget()
         self.done_button.pack(side="right")
         for button in self.play_buttons:
@@ -391,6 +392,7 @@ class QuestionPopup:
 
     def set_feedback(self, text, fg=None):
         set_readonly_text(self.feedback, text, fg)
+        self.feedback.tag_add("heading", "1.0", "1.0 lineend")
         for run in CHINESE_RUN.finditer(text):
             self.feedback.tag_add("chinese", f"1.0 + {run.start()} chars",
                                   f"1.0 + {run.end()} chars")

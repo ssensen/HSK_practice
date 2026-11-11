@@ -83,10 +83,12 @@ def can_blank(entry):
 
 
 def describe(entry):
-    lines = [f"{entry['word']} ({entry['pinyin']}): {entry['meaning']}"]
+    text = f"{entry['word']} ({entry['pinyin']}): {entry['meaning']}"
     if entry["sentence"]:
-        lines += [entry["sentence_pinyin"], entry["sentence"], entry["sentence_meaning"]]
-    return "\n".join(line for line in lines if line)
+        example = [entry["sentence_pinyin"], entry["sentence"], entry["sentence_meaning"]]
+        # A blank line between the word and its example sentence.
+        text += "\n\n" + "\n".join(line for line in example if line)
+    return text
 
 
 def pick_wrong(entries, entry, field, same_pos=False, avoid_text=""):
