@@ -1,0 +1,2 @@
+# Both PCs save answers here. sync.py registers a driver that merges it question by question.
+progress.json merge=progress

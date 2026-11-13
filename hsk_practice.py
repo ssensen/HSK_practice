@@ -7,6 +7,7 @@ import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+import winreg
 from ctypes import wintypes
 from tkinter import messagebox, ttk
 
@@ -17,6 +18,10 @@ import tutor
 
 CHINESE_FONT = "Microsoft YaHei UI"
 MUTEX_NAME = "HSKPracticeSingleInstance"
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+RUN_VALUE = "HSK Practice"
+LAUNCHER = "Start HSK Practice.bat"
 ERROR_ALREADY_EXISTS = 183
 # Stops a click meant for the window underneath from answering the question.
 ANSWER_LOCK_MS = 800
@@ -126,6 +131,47 @@ class GlobalHotkeys:
 
     def stop(self):
         user32.PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0)
+
+
+def startup_command():
+    # The launcher, not the app itself, so it gets the latest version from GitHub first.
+    # Minimised, so its console window doesn't pop up over everything at sign-in.
+    return f'cmd.exe /c start "" /min "{quiz.APP_DIR / LAUNCHER}"'
+
+
+def startup_enabled():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+            winreg.QueryValueEx(key, RUN_VALUE)
+    except OSError:
+        return False
+    # Startup apps in Task Manager or Settings can switch it off without removing it. An odd
+    # first byte means off.
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_KEY) as key:
+            approved, _type = winreg.QueryValueEx(key, RUN_VALUE)
+        return not approved[0] & 1
+    except OSError:
+        return True
+
+
+def set_startup(enabled):
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+        if enabled:
+            winreg.SetValueEx(key, RUN_VALUE, 0, winreg.REG_SZ, startup_command())
+        else:
+            try:
+                winreg.DeleteValue(key, RUN_VALUE)
+            except OSError:
+                pass
+    # Ticking the box should win over an earlier "Disabled" in Startup apps. Windows treats
+    # an app with no entry here as enabled.
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_APPROVED_KEY, 0,
+                            winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, RUN_VALUE)
+    except OSError:
+        pass
 
 
 class MONITORINFO(ctypes.Structure):
@@ -562,13 +608,17 @@ class App:
         self.second_monitor = tk.BooleanVar(value=self.settings["second_monitor"])
         ttk.Checkbutton(frame, text="Show the popup on my second monitor",
                         variable=self.second_monitor, command=self.apply_second_monitor).grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=(2, 10))
+            row=8, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        self.startup = tk.BooleanVar(value=startup_enabled())
+        ttk.Checkbutton(frame, text="Start with Windows", variable=self.startup,
+                        command=lambda: set_startup(self.startup.get())).grid(
+            row=9, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
         ttk.Button(frame, text="Question now", command=self.show_question).grid(
-            row=9, column=0, sticky="ew")
+            row=10, column=0, sticky="ew")
         self.pause_button = ttk.Button(frame, text="Pause", command=self.toggle_pause)
-        self.pause_button.grid(row=9, column=1, sticky="ew", padx=6)
-        ttk.Button(frame, text="Quit", command=self.quit).grid(row=9, column=2, sticky="ew")
+        self.pause_button.grid(row=10, column=1, sticky="ew", padx=6)
+        ttk.Button(frame, text="Quit", command=self.quit).grid(row=10, column=2, sticky="ew")
 
         self.refresh()
         self.tick()
