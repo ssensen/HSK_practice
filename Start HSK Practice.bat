@@ -10,3 +10,5 @@ if errorlevel 1 (
     timeout /t 15
 )
 start "" pythonw "%~dp0hsk_practice.py"
+rem Close this window. Started from Windows startup it would otherwise stay open.
+exit
