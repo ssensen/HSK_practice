@@ -51,6 +51,10 @@ TITLE_BAR_GUESS = 31
 # Gap between the word and the example sentence when both play after answering.
 SENTENCE_PAUSE_MS = 400
 CLIP_LENGTH_GUESS_MS = 1500
+# With "close by itself" on: how often to check whether the audio is still playing, and how
+# long to wait once it has finished before closing, so the sentence is never cut off.
+AUDIO_CHECK_MS = 200
+AUTO_DONE_DELAY_MS = 2000
 WINDOW_TOP_MARGIN = 10
 # Gap between the popup and the right edge of the screen, leaving room for the window border.
 SCREEN_EDGE_MARGIN = 30
@@ -278,6 +282,8 @@ class QuestionPopup:
         self.replies = queue.Queue()
         self.hotkeys = None
         self.queued_audio = None
+        self.audio_failed = False
+        self.auto_done = None  # Pending check or close, while closing by itself is on.
         gaming = app.settings["gaming_mode"]
 
         previous_window = user32.GetForegroundWindow()
@@ -399,6 +405,7 @@ class QuestionPopup:
 
     def close(self):
         self.cancel_queued_audio()
+        self.cancel_auto_done()
         if self.hotkeys:
             self.hotkeys.stop()
         self.win.destroy()
@@ -436,6 +443,8 @@ class QuestionPopup:
         self.place()
         if self.app.settings["autoplay"]:
             self.play_after_answer()
+            if self.app.settings["auto_done"]:
+                self.auto_done = self.win.after(AUDIO_CHECK_MS, self.close_when_audio_ends)
         self.app.refresh()
 
     def set_feedback(self, text, fg=None):
@@ -457,6 +466,23 @@ class QuestionPopup:
         delay = (audio.length_ms() or CLIP_LENGTH_GUESS_MS) + SENTENCE_PAUSE_MS
         self.queued_audio = self.win.after(delay, lambda: self.play(question.sentence_audio))
 
+    def close_when_audio_ends(self):
+        """Finish once the word and sentence have both played, as if Done was clicked."""
+        if self.audio_failed:  # Nothing to wait for, so leave it open as normal.
+            self.auto_done = None
+            return
+        if self.queued_audio or audio.is_playing():  # Still playing, or the sentence is next.
+            self.auto_done = self.win.after(AUDIO_CHECK_MS, self.close_when_audio_ends)
+            return
+        self.done_button.configure(text="Closing…")
+        self.auto_done = self.win.after(AUTO_DONE_DELAY_MS, self.finish)
+
+    def cancel_auto_done(self):
+        if self.auto_done:
+            self.win.after_cancel(self.auto_done)
+            self.auto_done = None
+            self.done_button.configure(text="Done")
+
     def cancel_queued_audio(self):
         if self.queued_audio:
             self.win.after_cancel(self.queued_audio)
@@ -464,7 +490,11 @@ class QuestionPopup:
 
     def play(self, clip):
         self.cancel_queued_audio()  # Pressing Play stops the sentence that was coming next.
+        if self.auto_done:  # Played again while closing by itself: wait for this one too.
+            self.cancel_auto_done()
+            self.auto_done = self.win.after(AUDIO_CHECK_MS, self.close_when_audio_ends)
         if not audio.play(clip):
+            self.audio_failed = True
             self.set_feedback(
                 self.feedback.get("1.0", "end-1c")
                 + "\n(Could not play the audio. Check that "
@@ -472,6 +502,7 @@ class QuestionPopup:
             self.place()
 
     def open_chat(self):
+        self.cancel_auto_done()  # Asking Claude means staying a while.
         self.ask_button.configure(state="disabled")
         self.chat.pack(fill="both", expand=True)
         self.place()
@@ -601,24 +632,28 @@ class App:
         ttk.Checkbutton(frame, text="Play pronunciation after answering (word, then sentence)",
                         variable=self.autoplay, command=self.apply_autoplay).grid(
             row=6, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.auto_done = tk.BooleanVar(value=self.settings["auto_done"])
+        ttk.Checkbutton(frame, text="Close the popup by itself once the sentence has played",
+                        variable=self.auto_done, command=self.apply_auto_done).grid(
+            row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self.gaming_mode = tk.BooleanVar(value=self.settings["gaming_mode"])
         ttk.Checkbutton(frame, text="Gaming mode (see-through popup, answer with the number pad)",
                         variable=self.gaming_mode, command=self.apply_gaming_mode).grid(
-            row=7, column=0, columnspan=3, sticky="w", pady=(2, 0))
+            row=8, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self.second_monitor = tk.BooleanVar(value=self.settings["second_monitor"])
         ttk.Checkbutton(frame, text="Show the popup on my second monitor",
                         variable=self.second_monitor, command=self.apply_second_monitor).grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=(2, 0))
+            row=9, column=0, columnspan=3, sticky="w", pady=(2, 0))
         self.startup = tk.BooleanVar(value=startup_enabled())
         ttk.Checkbutton(frame, text="Start with Windows", variable=self.startup,
                         command=lambda: set_startup(self.startup.get())).grid(
-            row=9, column=0, columnspan=3, sticky="w", pady=(2, 10))
+            row=10, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
         ttk.Button(frame, text="Question now", command=self.show_question).grid(
-            row=10, column=0, sticky="ew")
+            row=11, column=0, sticky="ew")
         self.pause_button = ttk.Button(frame, text="Pause", command=self.toggle_pause)
-        self.pause_button.grid(row=10, column=1, sticky="ew", padx=6)
-        ttk.Button(frame, text="Quit", command=self.quit).grid(row=10, column=2, sticky="ew")
+        self.pause_button.grid(row=11, column=1, sticky="ew", padx=6)
+        ttk.Button(frame, text="Quit", command=self.quit).grid(row=11, column=2, sticky="ew")
 
         self.refresh()
         self.tick()
@@ -645,6 +680,10 @@ class App:
 
     def apply_autoplay(self):
         self.settings["autoplay"] = self.autoplay.get()
+        quiz.save_settings(self.settings)
+
+    def apply_auto_done(self):
+        self.settings["auto_done"] = self.auto_done.get()
         quiz.save_settings(self.settings)
 
     def apply_gaming_mode(self):

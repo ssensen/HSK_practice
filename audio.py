@@ -25,6 +25,14 @@ def length_ms():
     return int(buffer.value) if buffer.value.isdigit() else 0
 
 
+def is_playing():
+    """True until the clip that was played last has finished."""
+    buffer = ctypes.create_unicode_buffer(32)
+    if mci(f"status {ALIAS} mode", buffer, len(buffer), None) != 0:
+        return False  # Nothing open: never played, stopped, or closed.
+    return buffer.value == "playing"
+
+
 def play(member):
     """Play one clip by its name inside the deck. Returns False if it can't be played."""
     stop()

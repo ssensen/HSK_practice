@@ -13,7 +13,8 @@ PROGRESS_FILE = APP_DIR / "progress.json"
 SETTINGS_FILE = APP_DIR / "settings.json"
 
 DEFAULT_SETTINGS = {"interval_minutes": 30, "snooze_minutes": 10, "min_level": 1,
-                    "max_level": 3, "autoplay": True, "gaming_mode": False, "second_monitor": False}
+                    "max_level": 3, "autoplay": True, "auto_done": False, "gaming_mode": False,
+                    "second_monitor": False}
 
 # How long until a question returns, by Leitner box. A wrong answer resets to box 0.
 RETRY_WRONG_SECONDS = 20 * 60

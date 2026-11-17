@@ -4,6 +4,7 @@
  "min_level": 2,
  "max_level": 3,
  "autoplay": true,
+ "auto_done": true,
  "gaming_mode": false,
  "second_monitor": false
 }
