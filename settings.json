@@ -6,5 +6,6 @@
  "autoplay": true,
  "auto_done": true,
  "gaming_mode": false,
- "second_monitor": false
+ "second_monitor": false,
+ "position": "center"
 }

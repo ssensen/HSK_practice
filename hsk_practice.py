@@ -372,6 +372,9 @@ class QuestionPopup:
         # on screen, and this way the window doesn't appear at the wrong size and then jump.
         set_opacity(win, 0)
         self.area = popup_area(app.settings["second_monitor"])
+        self.position = None
+        # It can't be dragged out of the way and forgotten: any move snaps it back.
+        win.bind("<Configure>", self.snap_back)
         self.place()
         win.deiconify()
         win.update()
@@ -511,8 +514,9 @@ class QuestionPopup:
         self.entry.focus_force()
 
     def place(self):
-        """Centre the window on the right edge of its monitor, so it covers less of a game or
-        video in the middle. If it's too tall to fit above the taskbar, shorten the chat."""
+        """Put the window in the middle of its monitor, or centred on the right edge where it
+        covers less of a game or video. If it's too tall to fit above the taskbar, shorten the
+        chat."""
         win = self.win
         win.update_idletasks()
         left, top, right, bottom = self.area
@@ -527,11 +531,22 @@ class QuestionPopup:
         height = win.winfo_reqheight() + title_bar
         y = top + max(WINDOW_TOP_MARGIN, (bottom - top - height) // 2)
         width = win.winfo_reqwidth()
-        x = right - width - SCREEN_EDGE_MARGIN
+        if self.app.settings["position"] == "center":
+            x = left + (right - left - width) // 2
+        else:
+            x = right - width - SCREEN_EDGE_MARGIN
+        self.position = (x, y)
         # Size and position together, so Windows doesn't show the grown window in the old spot
         # before moving it. Once the size is set here, the window keeps it until the next call,
         # so anything that changes the content's size has to call this again.
         win.geometry(f"{width}x{win.winfo_reqheight()}+{x}+{y}")
+
+    def snap_back(self, event):
+        win = self.win
+        if event.widget is not win or not self.position:  # Child widgets send this too.
+            return
+        if (win.winfo_x(), win.winfo_y()) != self.position:
+            win.geometry(f"+{self.position[0]}+{self.position[1]}")
 
     def write_log(self, text, tag=None):
         self.log.configure(state="normal")
@@ -644,16 +659,23 @@ class App:
         ttk.Checkbutton(frame, text="Show the popup on my second monitor",
                         variable=self.second_monitor, command=self.apply_second_monitor).grid(
             row=9, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        position_row = ttk.Frame(frame)
+        position_row.grid(row=10, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Label(position_row, text="Popup position").pack(side="left", padx=(0, 8))
+        self.position = tk.StringVar(value=self.settings["position"])
+        for value, label in (("right", "Right side"), ("center", "Centre of the screen")):
+            ttk.Radiobutton(position_row, text=label, value=value, variable=self.position,
+                            command=self.apply_position).pack(side="left", padx=(0, 8))
         self.startup = tk.BooleanVar(value=startup_enabled())
         ttk.Checkbutton(frame, text="Start with Windows", variable=self.startup,
                         command=lambda: set_startup(self.startup.get())).grid(
-            row=10, column=0, columnspan=3, sticky="w", pady=(2, 10))
+            row=11, column=0, columnspan=3, sticky="w", pady=(2, 10))
 
         ttk.Button(frame, text="Question now", command=self.show_question).grid(
-            row=11, column=0, sticky="ew")
+            row=12, column=0, sticky="ew")
         self.pause_button = ttk.Button(frame, text="Pause", command=self.toggle_pause)
-        self.pause_button.grid(row=11, column=1, sticky="ew", padx=6)
-        ttk.Button(frame, text="Quit", command=self.quit).grid(row=11, column=2, sticky="ew")
+        self.pause_button.grid(row=12, column=1, sticky="ew", padx=6)
+        ttk.Button(frame, text="Quit", command=self.quit).grid(row=12, column=2, sticky="ew")
 
         self.refresh()
         self.tick()
@@ -689,6 +711,12 @@ class App:
     def apply_gaming_mode(self):
         self.settings["gaming_mode"] = self.gaming_mode.get()
         quiz.save_settings(self.settings)
+
+    def apply_position(self):
+        self.settings["position"] = self.position.get()
+        quiz.save_settings(self.settings)
+        if self.popup:  # Move one that's already open, so the choice shows straight away.
+            self.popup.place()
 
     def apply_second_monitor(self):
         self.settings["second_monitor"] = self.second_monitor.get()
